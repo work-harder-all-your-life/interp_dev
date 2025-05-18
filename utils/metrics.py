@@ -107,15 +107,21 @@ def save_metrics(metrics_list, save_path):
 
 def save_to_csv(metrics_list, save_path):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
     row = {}
     for layer, metrics in metrics_list:
         for key, value in metrics.items():
-            row[f"{layer}_{key}"] = value
-    new_df = pd.DataFrame([row])
+            col = f"{layer}_{key}"
+            row[col] = value
+
     if os.path.exists(save_path):
         existing_df = pd.read_csv(save_path)
-        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-        combined_df = combined_df.reindex(columns=sorted(combined_df.columns))
+
+        for col, value in row.items():
+            existing_df.at[0, col] = value
+
     else:
-        combined_df = new_df
-    combined_df.to_csv(save_path, index=False)
+        existing_df = pd.DataFrame([row])
+        existing_df = existing_df.reindex(columns=sorted(existing_df.columns))
+
+    existing_df.to_csv(save_path, index=False)
