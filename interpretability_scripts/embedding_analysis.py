@@ -3,7 +3,7 @@ import os
 from utils.embeddings import get_loaders, save_metrics, save_visualization
 from models.train_models import train_emb_model
 from utils.metrics import evaluate_emb_model
-from models.models import EmbeddingCls
+from models.embeddings_model.model import EmbeddingModel
 
 import torch
 import torch.nn as nn
@@ -50,7 +50,7 @@ def main():
     train_loader, test_loader, test_dataset, input_dim = get_loaders(
         args.source_path, args.embeddings_source
     )
-    model = EmbeddingCls(input_dim, 2).to(device)
+    model = EmbeddingModel(input_dim, 2).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
 

@@ -1,5 +1,6 @@
 import os
-from datasets.datasets import EmbeddingsDataset
+from pathlib import Path
+from datasets.embeddings_dataset import ClassificationEmbeddingsDataset
 
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
@@ -11,9 +12,9 @@ def get_loaders(source_path, source_type):
     """
     Creates dataloaders for train and test files
     """
-    train_dataset = EmbeddingsDataset(
+    train_dataset = ClassificationEmbeddingsDataset(
         source_path, split="train", source_type=source_type)
-    test_dataset = EmbeddingsDataset(
+    test_dataset = ClassificationEmbeddingsDataset(
         source_path, split="test", source_type=source_type)
 
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
@@ -25,6 +26,15 @@ def get_loaders(source_path, source_type):
         test_dataset,
         train_dataset.embeddings.shape[1]
     )
+
+
+def assign_labels(embeddings):
+    """
+    Assigns labels to classes. In this case, by the name of the parent folder.
+    """
+    for emb in embeddings:
+        class_name = Path(emb['file_path']).parent.name
+        emb['label'] = class_name
 
 
 def save_visualization(model, vectors, labels, save_path, device):

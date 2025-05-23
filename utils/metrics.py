@@ -2,6 +2,7 @@ import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 from sklearn.metrics import accuracy_score, precision_score, recall_score, \
     f1_score
 import torch
@@ -105,23 +106,37 @@ def save_metrics(metrics_list, save_path):
                 f.write(f"{key}: {value}\n")
 
 
-def save_to_csv(metrics_list, save_path):
+def save_to_csv(chunk_rows, layer, save_path):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    row = {}
-    for layer, metrics in metrics_list:
-        for key, value in metrics.items():
-            col = f"{layer}_{key}"
-            row[col] = value
+    df_new = pd.DataFrame(chunk_rows)
+    prediction_col = f"prediction_{layer}"
 
     if os.path.exists(save_path):
-        existing_df = pd.read_csv(save_path)
+        df_existing = pd.read_csv(save_path)
 
-        for col, value in row.items():
-            existing_df.at[0, col] = value
+        if prediction_col not in df_existing.columns:
+            df_existing[prediction_col] = np.nan
 
+        for _, row in df_new.iterrows():
+            filename = row["filename"]
+            true_label = row["true_label"]
+            prediction = row[prediction_col]
+
+            if filename in df_existing["filename"].values:
+                idx = df_existing[df_existing["filename"] == filename].index[0]
+
+                if pd.isna(df_existing.at[idx, "true_label"]):
+                    df_existing.at[idx, "true_label"] = true_label
+
+                if pd.isna(df_existing.at[idx, prediction_col]):
+                    df_existing.at[idx, prediction_col] = prediction
+            else:
+                new_row = {col: np.nan for col in df_existing.columns}
+                new_row["filename"] = filename
+                new_row["true_label"] = true_label
+                new_row[prediction_col] = prediction
+                df_existing = pd.concat([df_existing, pd.DataFrame([new_row])], ignore_index=True)
+
+        df_existing.to_csv(save_path, index=False)
     else:
-        existing_df = pd.DataFrame([row])
-        existing_df = existing_df.reindex(columns=sorted(existing_df.columns))
-
-    existing_df.to_csv(save_path, index=False)
+        df_new.to_csv(save_path, index=False)

@@ -31,7 +31,7 @@ def save_to_npy(embeddings, save_dir):
     Saves embeddings in .npy format.
     """
     numpy_embs = np.array(embeddings)
-    np.save(os.path.join(save_dir, "34_ft.npy"), numpy_embs)
+    np.save(os.path.join(save_dir, "numpy_embs.npy"), numpy_embs)
 
 
 def save_to_chromadb(embeddings, db_path, split):

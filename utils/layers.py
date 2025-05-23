@@ -1,8 +1,7 @@
-from extract_features import extract_features
+from .extract_features import extract_features
 import os
 from pathlib import Path
 import shutil
-
 
 from sklearn.preprocessing import LabelEncoder
 import torch
@@ -14,22 +13,31 @@ class GetActivations(nn.Module):
     """
     Class for getting activations from a model.
     """
-
     def __init__(self, model):
         super().__init__()
         self.model = model
         self.saved_out = None
+        self.identity_dir = Path("tmp_identity")
+        self.identity_dir.mkdir(exist_ok=True)
 
     def save_identity(self, file_name):
-        folder = Path("tmp_identity")
-        folder.mkdir(exist_ok=True)
-
-        file_path = folder / file_name
+        file_path = self.identity_dir / file_name
         torch.save(self.saved_out, file_path)
 
     def delete_identity(self):
         if os.path.exists("tmp_identity"):
             shutil.rmtree("tmp_identity")
+
+    def _process_first_relu(self, x, model_front):
+        out = x.permute(0, 2, 1).unsqueeze(dim=1)
+        out = model_front.relu(model_front.bn1(model_front.conv1(out)))
+        self.saved_out = out.clone()
+        return out
+
+    def _load_identity(self, identity_file, device):
+        path = self.identity_dir / identity_file
+        if path.exists():
+            self.saved_out = torch.load(path, map_location=device)
 
     def forward(
             self, x, target_layer, from_activation=False, identity_file=None
@@ -37,21 +45,18 @@ class GetActivations(nn.Module):
         activations = {}
         model_front = self.model.model.front
         out = x
+
         if not from_activation:
-            out = x.permute(0, 2, 1).unsqueeze(dim=1)
-            out = model_front.relu(model_front.bn1(model_front.conv1(out)))
-            self.saved_out = out.clone()
+            out = self._process_first_relu(x, model_front)
+
             if identity_file:
                 self.save_identity(identity_file)
-            if "first relu" == target_layer:
+            if target_layer == "first relu":
                 activations["first relu"] = out
                 return activations, out
-        elif from_activation:
-            if identity_file and os.path.exists(
-                "tmp_identity/" + identity_file
-            ):
-                self.saved_out = torch.load(
-                    "tmp_identity/" + identity_file, map_location=x.device)
+        else:
+            if identity_file:
+                self._load_identity(identity_file, x.device)
             out = x
 
         for name, layer in model_front.named_children():
@@ -78,9 +83,11 @@ class GetActivations(nn.Module):
                 if f"{name} relu {c_relu}" == target_layer:
                     if block.downsample is not None:
                         identity = block.downsample(identity)
+
                     out += identity
                     out = block.relu(out)
                     self.saved_out = out.clone()
+
                     if identity_file:
                         self.save_identity(identity_file)
                     activations[f"{name} relu {c_relu}"] = out

@@ -14,8 +14,8 @@ from utils.metrics import (
     save_metrics,
     save_to_csv
 )
-from datasets.datasets import ActivationDataset
-from models.models import ProbingCls
+from datasets.activations_dataset import ActivationDataset
+from models.probing_model.model import ProbingCls
 from models.train_models import train_probing_model
 from pathlib import Path
 import json
@@ -24,6 +24,175 @@ import numpy as np
 from torch.utils.data import DataLoader
 import torch
 import wespeaker
+
+
+def test_probing_model(layer, dataset, loader, device):
+    model_path = f"./probing_models/{layer}.pth"
+    probing_model = ProbingCls(dataset.audio_data.shape[-1]).to(device)
+    probing_model.load_state_dict(torch.load(model_path, weights_only=True))
+    probing_model.eval()
+
+    y_pred, y_true = [], []
+    with torch.no_grad():
+        for X_batch, y_batch in loader:
+            X_batch = X_batch.to(device)
+            outputs = probing_model(X_batch).cpu()
+            y_pred.extend(outputs.numpy())
+            y_true.extend(y_batch.numpy())
+
+    return y_pred, y_true
+
+
+def check_paths(*paths):
+    for path in paths:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Folder {path} does not exists.")
+
+
+def get_remaining_layers(layers, resume_layer, done_message, on_done=None):
+    if resume_layer is None:
+        return layers
+    if resume_layer == layers[-1]:
+        print(done_message)
+        if on_done:
+            on_done()
+        return []
+    try:
+        layers = layers[layers.index(resume_layer) + 1:]
+    except ValueError:
+        raise ValueError(
+            f"Resume layer {resume_layer} not found in model.")
+    return layers
+
+
+def load_or_extract_acts(i, chunk, acts_model, device, layer, mode):
+    acts_path = f"tmp/tmp_acts_{i}.pt"
+    labels_path = f"tmp/tmp_labels_{i}.pt"
+
+    if not os.path.exists(acts_path):
+        activations, labels = get_activations(
+            acts_model, chunk, device, i, layer)
+    else:
+        acts_list = torch.load(acts_path)
+        labels = torch.load(labels_path)
+        activations = []
+        for num, act in enumerate(acts_list):
+            with torch.no_grad():
+                act = act.to(device)
+                layer_acts, _ = acts_model(
+                    act, layer, True, identity_file=f"identity_{i}_{num}.pt")
+                activations.append(layer_acts[layer])
+
+    dataset = ActivationDataset(activations, labels)
+
+    return dataset, activations, labels
+
+
+def train(model, acts_model, train_files, device, resume_file, args):
+    layers = get_layers(model)
+    message = "Last training layer already completed." \
+        "Skipping training and going to test."
+
+    if Path(resume_file).exists():
+        with open(resume_file, "r") as f:
+            resume_layer = json.load(f).get("last_layer")
+    else:
+        resume_layer = None
+    layers = get_remaining_layers(layers, resume_layer,
+                                  done_message=message)
+    if not layers:
+        return
+
+    skf, file_paths, file_labels = prepare_chunks(
+        train_files, args.chunk_size)
+
+    for layer in layers:
+        print(f"Processing layer: {layer}")
+        probing_model = None
+
+        for i, (_, chunk_idx) in enumerate(
+                skf.split(file_paths, file_labels)
+        ):
+            chunk = file_paths[chunk_idx]
+            dataset, activations, labels = load_or_extract_acts(
+                i, chunk, acts_model, device, layer, mode="train")
+            loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+            probing_model = train_probing_model(
+                loader,
+                input_dim=dataset.audio_data.shape[-1],
+                device=device,
+                existing_model=probing_model
+            )
+            save_tmp(activations, f"tmp_acts_{i}.pt")
+            save_tmp(labels, f"tmp_labels_{i}.pt")
+
+        del activations, labels, dataset, loader
+        torch.save(probing_model.state_dict(), f"./probing_models/{layer}.pth")
+        with open(resume_file, "w") as f:
+            json.dump({"last_layer": layer}, f)
+
+    acts_model.delete_identity()
+    delete_tmp()
+
+
+def test(model, acts_model, test_files, device, args):
+    resume_test_file = args.text_save_path
+    message = "Last test layer already evaluated. Exiting and visualizing."
+    layers = get_layers(model)
+    resume_layer = resume_test_layer(resume_test_file)
+    layers = get_remaining_layers(layers, resume_layer,
+                                  done_message=message,
+                                  on_done=lambda: plot_metrics(
+                                      read_metrics(args.text_save_path),
+                                      args.visual_save_path))
+    if not layers:
+        return
+
+    skf, file_paths, file_labels = prepare_chunks(test_files, args.chunk_size)
+
+    for layer in layers:
+        print(f"Processing layer: {layer}")
+        all_preds, all_labels = [], []
+        all_filenames = []
+        chunk_rows = []
+
+        for i, (_, chunk_idx) in enumerate(skf.split(file_paths, file_labels)):
+            chunk = file_paths[chunk_idx]
+            dataset, activations, labels = load_or_extract_acts(
+                i, chunk, acts_model, device, layer, mode="test")
+            loader = DataLoader(dataset, batch_size=32, shuffle=False)
+
+            save_tmp(activations, f"tmp_acts_{i}.pt")
+            save_tmp(labels, f"tmp_labels_{i}.pt")
+
+            y_pred_chunk, y_true_chunk = test_probing_model(
+                layer, dataset, loader, device)
+
+            for filepath, true_label, pred in zip(chunk, y_true_chunk,
+                                                  y_pred_chunk):
+                chunk_rows.append({
+                    "filename": os.path.relpath(filepath, args.test_dir),
+                    "true_label": true_label,
+                    f"prediction_{layer}": int(pred > 0.5)
+                })
+
+            all_preds.extend(y_pred_chunk)
+            all_labels.extend(y_true_chunk)
+            all_filenames.extend(chunk)
+
+            del activations, labels, dataset, loader
+            torch.cuda.empty_cache()
+
+        metrics = evaluate_probing(
+            layer, np.array(all_preds), np.array(all_labels))
+
+        save_metrics([metrics], args.text_save_path)
+        save_to_csv(chunk_rows, layer, args.csv_save_path)
+
+    acts_model.delete_identity()
+    delete_tmp()
+    plot_metrics(read_metrics(args.text_save_path), args.visual_save_path)
 
 
 def main():
@@ -75,182 +244,21 @@ def main():
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.pretrain_dir):
-        raise FileNotFoundError(f"Folder {args.pretrain_dir} does not exists.")
-    if not os.path.exists(args.train_dir):
-        raise FileNotFoundError(f"Folder {args.train_dir} does not exists.")
-    if not os.path.exists(args.test_dir):
-        raise FileNotFoundError(f"Folder {args.test_dir} does not exists.")
+    check_paths(args.pretrain_dir, args.train_dir, args.test_dir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     model = wespeaker.load_model_local(args.pretrain_dir)
     model.set_device(device)
-
     acts_model = GetActivations(model)
 
     train_files = get_audio_path(args.train_dir)
     test_files = get_audio_path(args.test_dir)
 
     resume_file = "last_layer.json"
-    resume_test_file = args.text_save_path
 
-    layers = get_layers(model)
-
-    if Path(resume_file).exists():
-        with open(resume_file, "r") as f:
-            resume_layer = json.load(f).get("last_layer")
-    else:
-        resume_layer = None
-
-    if resume_layer is not None and resume_layer == layers[-1]:
-        print(
-            "Last training layer already completed. "
-            "Skipping training and going to test."
-        )
-        layers = []
-    elif resume_layer is not None:
-        try:
-            resume_index = layers.index(resume_layer)
-            layers = layers[resume_index + 1:]
-        except ValueError:
-            raise ValueError(
-                f"Resume layer {resume_layer} not found in model.")
-
-    if layers:
-        skf, file_paths, file_labels = prepare_chunks(
-            train_files, args.chunk_size)
-
-        for layer in layers:
-            print(f"Processing layer: {layer}")
-            probing_model = None
-            for i, (_, chunk_idx) in enumerate(
-                skf.split(file_paths, file_labels)
-            ):
-                chunk = file_paths[chunk_idx]
-                if not os.path.exists(f"tmp/tmp_acts_{i}.pt"):
-                    train_acts, train_labels = get_activations(
-                        acts_model, chunk, device, i, layer)
-                    train_dataset = ActivationDataset(train_acts, train_labels)
-                    train_loader = DataLoader(
-                        train_dataset, batch_size=32, shuffle=True)
-                else:
-                    train_acts = []
-                    acts_list = torch.load(f"tmp/tmp_acts_{i}.pt")
-                    train_labels = torch.load(f"tmp/tmp_labels_{i}.pt")
-                    for num, act in enumerate(acts_list):
-                        with torch.no_grad():
-                            act = act.to(device)
-                            acts, _ = acts_model(
-                                act, layer, True,
-                                identity_file=f"identity_{i}_{num}.pt")
-                            train_acts.append(acts[layer])
-                    train_dataset = ActivationDataset(train_acts, train_labels)
-                    train_loader = DataLoader(
-                        train_dataset, batch_size=32, shuffle=True)
-
-                if probing_model is None:
-                    probing_model = train_probing_model(
-                        train_loader,
-                        input_dim=train_dataset.audio_data.shape[-1],
-                        device=device
-                    )
-                else:
-                    probing_model = train_probing_model(
-                        train_loader,
-                        input_dim=train_dataset.audio_data.shape[-1],
-                        device=device,
-                        existing_model=probing_model
-                    )
-                save_tmp(train_acts, f"tmp_acts_{i}.pt")
-                save_tmp(train_labels, f"tmp_labels_{i}.pt")
-            del train_acts, train_labels, train_dataset, train_loader
-            torch.save(probing_model.state_dict(), f"./models/{layer}.pth")
-            with open(resume_file, "w") as f:
-                json.dump({"last_layer": layer}, f)
-
-    acts_model.delete_identity()
-    delete_tmp()
-
+    train(model, acts_model, train_files, device, resume_file, args)
     print("Testing")
-    layers = get_layers(model)
-    resume_test = resume_test_layer(resume_test_file)
-    if resume_test is not None:
-        if resume_test == layers[-1]:
-            print(
-                "Last test layer already evaluated. Exiting and visualizing."
-            )
-            plot_metrics(read_metrics(args.text_save_path),
-                         args.visual_save_path)
-            return
-        try:
-            resume_index = layers.index(resume_test)
-            layers = layers[resume_index + 1:]
-        except ValueError:
-            raise ValueError(f"Resume test layer {resume_test} not found.")
-
-    skf, file_paths, file_labels = prepare_chunks(test_files, args.chunk_size)
-
-    for layer in layers:
-        print(f"Processing layer: {layer}")
-        all_preds = []
-        all_labels = []
-
-        for i, (_, chunk_idx) in enumerate(skf.split(file_paths, file_labels)):
-            chunk = file_paths[chunk_idx]
-            if not os.path.exists(f"tmp/tmp_acts_{i}.pt"):
-                test_acts, test_labels = get_activations(
-                    acts_model, chunk, device, i, layer)
-                dataset = ActivationDataset(test_acts, test_labels)
-                loader = DataLoader(dataset, batch_size=32, shuffle=False)
-            else:
-                test_acts = []
-                acts_list = torch.load(f"tmp/tmp_acts_{i}.pt")
-                test_labels = torch.load(f"tmp/tmp_labels_{i}.pt")
-                for num, act in enumerate(acts_list):
-                    with torch.no_grad():
-                        act = act.to(device)
-                        acts, _ = acts_model(
-                            act, layer, True,
-                            identity_file=f"identity_{i}_{num}.pt"
-                        )
-                        test_acts.append(acts[layer])
-
-                dataset = ActivationDataset(test_acts, test_labels)
-                loader = DataLoader(dataset, batch_size=32, shuffle=True)
-
-            save_tmp(test_acts, f"tmp_acts_{i}.pt")
-            save_tmp(test_labels, f"tmp_labels_{i}.pt")
-            probing_model = ProbingCls(dataset.audio_data.shape[-1]).to(device)
-            probing_model.load_state_dict(torch.load(
-                f"./models/{layer}.pth", weights_only=True))
-            probing_model.eval()
-
-            y_pred_chunk, y_true_chunk = [], []
-            with torch.no_grad():
-                for X_batch, y_batch in loader:
-                    X_batch = X_batch.to(device)
-                    outputs = probing_model(X_batch).cpu()
-                    y_pred_chunk.extend(outputs.numpy())
-                    y_true_chunk.extend(y_batch.numpy())
-
-            all_preds.extend(y_pred_chunk)
-            all_labels.extend(y_true_chunk)
-
-            del test_acts, test_labels, dataset, loader, probing_model
-            torch.cuda.empty_cache()
-
-        y_pred = np.array(all_preds)
-        y_true = np.array(all_labels)
-        metrics = evaluate_probing(layer, y_pred, y_true)
-
-        save_metrics([metrics], args.text_save_path)
-        save_to_csv([metrics], args.csv_save_path)
-
-    acts_model.delete_identity()
-    delete_tmp()
-
-    plot_metrics(read_metrics(args.text_save_path), args.visual_save_path)
+    test(model, acts_model, test_files, device, args)
 
 
 if __name__ == '__main__':
