@@ -1,9 +1,12 @@
 import argparse
 import os
-from utils.embeddings import get_loaders, save_metrics, save_visualization
-from models.train_models import train_emb_model
-from utils.metrics import evaluate_emb_model
-from models.embeddings_model.model import EmbeddingModel
+from utils import (
+    get_loaders,
+    save_emb_metrics,
+    save_visualization,
+    evaluate_emb_model
+)
+from models import train_emb_model, EmbeddingModel
 
 import torch
 import torch.nn as nn
@@ -58,9 +61,9 @@ def main():
                     criterion, num_epoch=300, device=device)
 
     metrics = evaluate_emb_model(model, test_loader, device)
-    save_metrics(metrics, args.eval_path)
+    save_emb_metrics(metrics, args.eval_path)
     save_visualization(
-        model, test_dataset.embeddings.numpy(),
+        model, test_dataset.audio_data.numpy(),
         test_dataset.labels.numpy(), args.visual_path, device=device
     )
 

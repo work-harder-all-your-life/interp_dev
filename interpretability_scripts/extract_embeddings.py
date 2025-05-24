@@ -1,8 +1,11 @@
 import argparse
 import os
-from utils.file_ops import get_audio_path
-from utils.embeddings import assign_labels
-from utils.file_ops import save_to_npy, save_to_chromadb
+from utils import (
+    get_audio_path,
+    assign_labels_by_parent_dir,
+    save_to_npy,
+    save_to_chromadb
+)
 
 import torch
 from tqdm import tqdm
@@ -65,8 +68,8 @@ def main():
     test_embeddings = extract_embeddings(test_audio_files, device,
                                          args.pretrain_dir)
 
-    assign_labels(train_embeddings)
-    assign_labels(test_embeddings)
+    assign_labels_by_parent_dir(train_embeddings)
+    assign_labels_by_parent_dir(test_embeddings)
 
     if args.output == "npy":
         os.makedirs(args.save_path, exist_ok=True)

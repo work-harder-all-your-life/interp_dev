@@ -1,4 +1,4 @@
-from .probing_model.model import ProbingCls
+from .probing_model import ProbingCls
 
 import torch
 import torch.optim as optim

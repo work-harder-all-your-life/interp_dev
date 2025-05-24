@@ -11,7 +11,10 @@ from tqdm import tqdm
 
 class GetActivations(nn.Module):
     """
-    Class for getting activations from a model.
+    A class for obtaining activations of ResNet model intermediate layers.
+
+    Provides preservation of the intermediate tensor (identity) for use in
+    residual links and retrieves outputs from a given layer.
     """
     def __init__(self, model):
         super().__init__()
@@ -21,20 +24,35 @@ class GetActivations(nn.Module):
         self.identity_dir.mkdir(exist_ok=True)
 
     def save_identity(self, file_name):
+        """
+        Saves the current saved_out (identity-tensor) to a file.
+        """
         file_path = self.identity_dir / file_name
         torch.save(self.saved_out, file_path)
 
     def delete_identity(self):
+        """
+        Deletes the temporary identity files directory, if it exists.
+        Used to clean up after activation extraction is complete.
+        """
         if os.path.exists("tmp_identity"):
             shutil.rmtree("tmp_identity")
 
     def _process_first_relu(self, x, model_front):
+        """
+        Applies the initial transformations (Conv + BN + ReLU) to the input
+        and saves the result to self.saved_out.
+        """
         out = x.permute(0, 2, 1).unsqueeze(dim=1)
         out = model_front.relu(model_front.bn1(model_front.conv1(out)))
         self.saved_out = out.clone()
         return out
 
     def _load_identity(self, identity_file, device):
+        """
+        Loads the saved identity-tensor from disk
+        and saves it to self.saved_out.
+        """
         path = self.identity_dir / identity_file
         if path.exists():
             self.saved_out = torch.load(path, map_location=device)
@@ -42,6 +60,10 @@ class GetActivations(nn.Module):
     def forward(
             self, x, target_layer, from_activation=False, identity_file=None
     ):
+        """
+        A forward pass through the model for the specified layer,
+        with identity-tensors saved or loaded.
+        """
         activations = {}
         model_front = self.model.model.front
         out = x
@@ -106,7 +128,7 @@ class GetActivations(nn.Module):
 
 def get_layers(model):
     """
-    Returns SimAM ResNet's layers
+    Returns a list of names of all extracted SimAM ResNet model layers.
     """
     layers = []
 
@@ -129,9 +151,13 @@ def get_layers(model):
     return layers
 
 
-def get_activations(model, audio_files, device, chunk_num, layer):
+def get_activations(model, audio_files, device, chunk_num, layer, mode):
     """
-    Gets model activations for a specified layer.
+    Retrieves activations of the specified layer for a set of audio files.
+
+    Uses a pre-trained model and the GetActivations class.
+    For each audio file, an identity-tensor is stored or loaded (if required).
+    The resulting activations are saved to a list.
     """
     label_encoder = LabelEncoder()
     labels = [Path(f).parent.name for f in audio_files]
@@ -145,20 +171,6 @@ def get_activations(model, audio_files, device, chunk_num, layer):
             feats = extract_features(audio_path).to(device)
             acts, _ = model(
                 feats, layer,
-                identity_file=f"identity_{chunk_num}_{i}.pt")
+                identity_file=f"{mode}_identity_{chunk_num}_{i}.pt")
             activations.append(acts[layer].cpu())
     return activations, labels
-
-
-def resume_test_layer(metrics_path):
-    """
-    Defines last test layer
-    """
-    if not Path(metrics_path).exists():
-        return None
-    with open(metrics_path, "r") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    for line in reversed(lines):
-        if ':' not in line:
-            return line
-    return None

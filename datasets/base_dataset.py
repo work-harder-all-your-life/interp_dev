@@ -3,6 +3,9 @@ from torch.utils.data import Dataset
 
 
 class BaseDataset(Dataset, abc.ABC):
+    """
+    Abstract base class for datasets
+    """
     def __init__(self):
         self.audio_data = None
         self.labels = None

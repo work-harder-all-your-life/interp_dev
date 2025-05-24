@@ -43,13 +43,22 @@ def evaluate_emb_model(model, test_loader, device):
 
 
 def evaluate_probing(layer, y_pred, y_true):
+    """
+    Computes classification metrics (accuracy and F1-score) for a given layer.
+
+    Converts probabilistic y_pred predictions into binary labels, then
+    compares them with the true y_true labels and computes the metrics.
+    """
     y_pred_labels = (y_pred >= 0.5).astype(int).squeeze(1)
     acc = accuracy_score(y_true, y_pred_labels)
     f1 = f1_score(y_true, y_pred_labels)
-    return (layer, {"accuracy": acc, "f1_score": f1})
+    return layer, {"accuracy": acc, "f1_score": f1}
 
 
 def read_metrics(file_path):
+    """
+    Reads metrics from a text file saved in save_metrics format.
+    """
     metrics_list = []
     current_layer = None
     current_metrics = {}
@@ -75,6 +84,14 @@ def read_metrics(file_path):
 
 
 def plot_metrics(metrics_list, save_path):
+    """
+    Builds Accuracy and F1-score graphs by layers
+    and saves them to the specified file.
+
+    The function builds two line graphs - one for accuracy
+    and one for F1-score - by layers from metrics_list.
+    X-axes are layer identifiers.
+    """
     layers = [m[0] for m in metrics_list]
     accuracies = [m[1]["accuracy"] for m in metrics_list]
     f1_scores = [m[1]["f1_score"] for m in metrics_list]
@@ -98,6 +115,16 @@ def plot_metrics(metrics_list, save_path):
 
 
 def save_metrics(metrics_list, save_path):
+    """
+    Saves metrics by layer to a text file.
+
+    For each layer, the metrics are written in the form:
+        <layer>
+        accuracy: <value>
+        f1_score: <value>
+
+    If the file already exists, new metrics are added to the end.
+    """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, 'a') as f:
         for layer, metrics in metrics_list:
@@ -107,6 +134,21 @@ def save_metrics(metrics_list, save_path):
 
 
 def save_to_csv(chunk_rows, layer, save_path):
+    """
+    Saves or updates a CSV file with model predictions for a specified layer.
+
+    The function takes a list of strings (predictions and labels)
+    and saves them to a CSV file.
+    If the file already exists:
+        - Adds a column for the predictions of the corresponding layer
+            if it does not exist.
+        - Updates the true_label and prediction_<layer> values
+            for existing records by file name.
+        - Adds new rows if the filename does not exist in the current CSV.
+
+    If the file does not exist, it will be created and
+    populated with the passed rows.
+    """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     df_new = pd.DataFrame(chunk_rows)
     prediction_col = f"prediction_{layer}"
@@ -135,7 +177,8 @@ def save_to_csv(chunk_rows, layer, save_path):
                 new_row["filename"] = filename
                 new_row["true_label"] = true_label
                 new_row[prediction_col] = prediction
-                df_existing = pd.concat([df_existing, pd.DataFrame([new_row])], ignore_index=True)
+                df_existing = pd.concat(
+                    [df_existing, pd.DataFrame([new_row])], ignore_index=True)
 
         df_existing.to_csv(save_path, index=False)
     else:

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from datasets.embeddings_dataset import ClassificationEmbeddingsDataset
+from datasets import ClassificationEmbeddingsDataset
 
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
@@ -10,7 +10,7 @@ import torch
 
 def get_loaders(source_path, source_type):
     """
-    Creates dataloaders for train and test files
+    Creates dataloaders for train and test files.
     """
     train_dataset = ClassificationEmbeddingsDataset(
         source_path, split="train", source_type=source_type)
@@ -24,11 +24,11 @@ def get_loaders(source_path, source_type):
         train_loader,
         test_loader,
         test_dataset,
-        train_dataset.embeddings.shape[1]
+        train_dataset.audio_data.shape[1]
     )
 
 
-def assign_labels(embeddings):
+def assign_labels_by_parent_dir(embeddings):
     """
     Assigns labels to classes. In this case, by the name of the parent folder.
     """
@@ -39,7 +39,7 @@ def assign_labels(embeddings):
 
 def save_visualization(model, vectors, labels, save_path, device):
     """
-    Saves embedding visualization in .png files
+    Saves embedding visualization in .png files.
     """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
@@ -68,9 +68,9 @@ def save_visualization(model, vectors, labels, save_path, device):
     plt.close()
 
 
-def save_metrics(metrics, save_path):
+def save_emb_metrics(metrics, save_path):
     """
-    Saves computed metrics in .txt file
+    Saves computed metrics in .txt file.
     """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 

@@ -9,6 +9,9 @@ from sklearn.model_selection import StratifiedKFold
 
 
 def get_audio_path(audio_dir):
+    """
+    Recursively finds all audio files in the specified directory.
+    """
     audio_dir = Path(audio_dir)
     return list(audio_dir.glob('**/*.wav')) + list(audio_dir.glob('**/*.mp3'))
 
@@ -36,7 +39,7 @@ def save_to_npy(embeddings, save_dir):
 
 def save_to_chromadb(embeddings, db_path, split):
     """
-    Stores embeddings in ChromaDB
+    Stores embeddings in ChromaDB.
     """
     client = chromadb.PersistentClient(path=db_path)
     collection = client.get_or_create_collection(name="gender_embeddings")
@@ -52,12 +55,19 @@ def save_to_chromadb(embeddings, db_path, split):
     )
 
 
-def save_tmp(data, file_name):
-    folder = Path("tmp")
+def save_tmp(data, dir_name, file_name):
+    """
+    Saves transferred data to a temporary directory as a PyTorch file.
+    If the directory does not exist, it will be created.
+    """
+    folder = Path(dir_name)
     folder.mkdir(exist_ok=True)
     torch.save(data, folder / file_name)
 
 
-def delete_tmp():
-    if os.path.exists("tmp"):
-        shutil.rmtree("tmp")
+def delete_tmp(dir_name):
+    """
+    Deletes the specified directory and all its contents.
+    """
+    if os.path.exists(dir_name):
+        shutil.rmtree(dir_name)
