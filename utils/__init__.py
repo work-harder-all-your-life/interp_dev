@@ -12,12 +12,6 @@ from .embeddings import (
     save_emb_metrics,
     save_visualization
 )
-from .emotion_embeddings import (
-    assign_emotion_labels,
-    get_emotion_loaders,
-    save_emotion_emb_metrics,
-    save_emotion_emb_visualization
-)
 from .layers import (
     GetActivations,
     get_activations,

@@ -1,3 +1,2 @@
 from .activations_dataset import ActivationDataset
 from .embeddings_dataset import ClassificationEmbeddingsDataset
-from .emotion_dataset import EmotionEmbeddingsDataset
